@@ -390,5 +390,74 @@ namespace Tests
             });
         }
 
+        [Test]
+        public void ConfigFileParse_NodesOnOneLine_Works()
+        {
+            ConfigFile.ToArray().Parse("D{e=1}F{g=2}")
+                      .WillSucceed(v =>
+                      {
+                          Assert.AreEqual(2,   v.Length);
+                          Assert.AreEqual("D", v[0].Name);
+                          Assert.AreEqual("e", v[0].Properties[0].Name);
+                          Assert.AreEqual("1", v[0].Properties[0].Value);
+                          Assert.AreEqual("F", v[1].Name);
+                          Assert.AreEqual("g", v[1].Properties[0].Name);
+                          Assert.AreEqual("2", v[1].Properties[0].Value);
+                      });
+            ConfigFile.ToArray().Parse("N { k = v } B { j = 1 } // comment\nM {}\n")
+                      .WillSucceed(v =>
+                      {
+                          Assert.AreEqual(3,   v.Length);
+                          Assert.AreEqual("N", v[0].Name);
+                          Assert.AreEqual("k", v[0].Properties[0].Name);
+                          Assert.AreEqual("v", v[0].Properties[0].Value);
+                          Assert.AreEqual("B", v[1].Name);
+                          Assert.AreEqual("j", v[1].Properties[0].Name);
+                          Assert.AreEqual("1", v[1].Properties[0].Value);
+                          Assert.AreEqual("M", v[2].Name);
+                      });
+        }
+
+        [Test]
+        public void ConfigFileParse_NodeOpenedAfterCloseBrace_Works()
+        {
+            ConfigFile.ToArray().Parse(@"N
+{
+    a = 1 }
+M {
+    b = 2 } O { c = 3
+}
+").WillSucceed(v =>
+            {
+                Assert.AreEqual(3,   v.Length);
+                Assert.AreEqual("N", v[0].Name);
+                Assert.AreEqual("a", v[0].Properties[0].Name);
+                Assert.AreEqual("1", v[0].Properties[0].Value);
+                Assert.AreEqual("M", v[1].Name);
+                Assert.AreEqual("b", v[1].Properties[0].Name);
+                Assert.AreEqual("2", v[1].Properties[0].Value);
+                Assert.AreEqual("O", v[2].Name);
+                Assert.AreEqual("c", v[2].Properties[0].Name);
+                Assert.AreEqual("3", v[2].Properties[0].Value);
+            });
+        }
+
+        [Test]
+        public void ConfigFileParse_MembersAfterChildOnOneLine_Works()
+        {
+            ConfigFile.ToArray().Parse("N { B { c = 2 } C { d = 3 } #/X {} a = 1 }")
+                      .WillSucceed(v =>
+                      {
+                          Assert.AreEqual(1,   v.Length);
+                          Assert.AreEqual(2,   v[0].Children.Length);
+                          Assert.AreEqual("B", v[0].Children[0].Name);
+                          Assert.AreEqual("C", v[0].Children[1].Name);
+                          Assert.AreEqual(1,   v[0].Pastes.Length);
+                          Assert.AreEqual(1,   v[0].Properties.Length);
+                          Assert.AreEqual("a", v[0].Properties[0].Name);
+                          Assert.AreEqual("1", v[0].Properties[0].Value);
+                      });
+        }
+
     }
 }

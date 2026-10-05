@@ -200,6 +200,27 @@ namespace KSPMMCfgParser
         private static readonly Parser<char, char> CloseBrace = JunkBlock.Right(Char('}'));
 
         /// <summary>
+        /// Parser for the braces of a node and the members between them.
+        /// The stock loader treats a brace as a line break, so a closing
+        /// brace can end a line, and a member that ends in one needs no
+        /// line break after it.
+        /// </summary>
+        /// <param name="lineMember">Parser for members that end with their line (properties, comments)</param>
+        /// <param name="braceMember">Parser for members that end with a closing brace (nodes)</param>
+        // Generic over T so callers can keep members (dynamic) or discard them (Unit)
+        private static Parser<char, IEnumerable<T>> NodeBody<T>(Parser<char, T> lineMember,
+                                                                // Kept apart from lineMember because it needs a different terminator
+                                                                Parser<char, T> braceMember)
+            // A line member must be followed by a line break, or by a '}' that is checked but not consumed
+            => Many(lineMember.Left(AtLeastOneEOL | LookAhead(Char('}')).Ignore())
+                    // A brace member may be followed by anything, including nothing, so its sibling can share the line
+                    | braceMember.Left(JunkBlock))
+               // OpenBrace also skips whitespace and comments on both sides of the '{'
+               .Between(OpenBrace,
+                        // CloseBrace consumes the '}' that the lookahead above left in place
+                        CloseBrace);
+
+        /// <summary>
         /// @+$-!%&amp; => enum?
         /// #Paste's complex and very different syntax
         /// is handled in its own separate parser
@@ -248,12 +269,12 @@ namespace KSPMMCfgParser
         public static Parser<char, MMPasteNode> PasteNode(Parser<char, KSPConfigNode> configNode)
             => from path  in Char('#').Right(NodePath)
                from needs in NeedsClause!.AsNullable()
-               from _     in (Property!.Ignore()
-                              | configNode!.Ignore()
-                              | Comment!.Ignore())
-                             .SeparatedBy(AtLeastOneEOL)
-                             .Between(OpenBrace,
-                                      CloseBrace)
+               // Line members: a paste node's contents are checked for syntax and discarded
+               from _     in NodeBody(Property!.Ignore()
+                                      // A comment standing alone on a line also counts as a line member
+                                      | Comment!.Ignore(),
+                                      // Brace members: nested nodes only, since pastes do not nest here
+                                      configNode!.Ignore())
                select new MMPasteNode(path, needs);
 
         /// <summary>
@@ -283,15 +304,18 @@ namespace KSPMMCfgParser
                                                                    .AsDynamic()
                                        | StringIgnoreCase(":FINAL").Map(_ => new MMNodeSuffix("FINAL"))
                                                                    .AsDynamic())
-                from contents  in (Property!.AsDynamic()
-                                   | configNode!.AbortQuietlyIfEntered()
-                                                .AsDynamic()
-                                   | PasteNode(configNode).AbortQuietlyIfEntered()
-                                                          .AsDynamic()
-                                   | Comment!.AsDynamic())
-                                  .SeparatedBy(AtLeastOneEOL)
-                                  .Between(OpenBrace,
-                                           CloseBrace)
+                // Line members: Property is tried before any node, since both can start with a name
+                from contents  in NodeBody(Property!.AsDynamic()
+                                           // Now tried before nodes, which is safe because only a comment starts with "//"
+                                           | Comment!.AsDynamic(),
+                                           // Brace members: a child node, reported as an error once it has consumed input
+                                           configNode!.AbortQuietlyIfEntered()
+                                                      // Converted so it can be alternated with the other member types
+                                                      .AsDynamic()
+                                           // A paste node ends in '}' too, so it is terminated like a child node
+                                           | PasteNode(configNode).AbortQuietlyIfEntered()
+                                                                  // Converted for the same reason as the child node
+                                                                  .AsDynamic())
                 select new KSPConfigNode(
                     op, name, filters,
 
@@ -313,9 +337,11 @@ namespace KSPMMCfgParser
         /// Parser for a whole file (multiple config nodes)
         /// </summary>
         public static readonly Parser<char, IEnumerable<KSPConfigNode>> ConfigFile =
-            ConfigNode.AbortQuietlyIfEntered()
-                      .SeparatedBy(AtLeastOneEOL)
-                      .Between(JunkBlock)
-                      .End();
+            // Skip leading whitespace and comments, then take nodes until none is left
+            JunkBlock.Right(Many(ConfigNode.AbortQuietlyIfEntered()
+                                           // No line break is required between top-level nodes
+                                           .Left(JunkBlock)))
+                     // Anything left over, such as a stray '}', is an error
+                     .End();
     }
 }
